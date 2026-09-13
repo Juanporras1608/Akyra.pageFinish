@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin | Galería AKYRA</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    :root { color-scheme: dark; font-family: 'Space Grotesk', Arial, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0a0a0a; color: #fff; }
+    main { width: min(92vw, 560px); padding: 32px; border: 1px solid #333; border-radius: 12px; background: #171717; }
+    h1 { margin-top: 0; font-family: Georgia, serif; }
+    form { display: grid; gap: 16px; }
+    input[type="file"] { width: 100%; padding: 14px 0; }
+    button { padding: 13px 18px; border: 0; border-radius: 4px; background: #fff; color: #000; font-weight: 700; cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .6; }
+    #mensaje { min-height: 24px; color: #a3a3a3; }
+    #preview { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; }
+    #preview img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; }
+    a { color: #fff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Subir fotos</h1>
+    <p>Selecciona una o varias imágenes para publicarlas en la galería.</p>
+    <form id="fotoForm">
+      <input type="file" id="fotoInput" multiple accept="image/*" required>
+      <div id="preview" aria-live="polite"></div>
+      <button type="submit" id="subirBtn">Subir Foto</button>
+      <p id="mensaje" role="status"></p>
+    </form>
+    <a href="index.html#galeria-publica">Ver galería pública</a>
+  </main>
+
+  <script>
+    // El SDK recibe la URL base del proyecto, no la ruta REST /rest/v1/.
+    const SUPABASE_URL = 'https://ydxfnxqwhswlfywmoiht.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_zt8BtiPHlmBH4_QVFTxgMA_BFCoOhRJ';
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const BUCKET = 'galeria';
+    const form = document.getElementById('fotoForm');
+    const input = document.getElementById('fotoInput');
+    const button = document.getElementById('subirBtn');
+    const message = document.getElementById('mensaje');
+    const preview = document.getElementById('preview');
+
+    input.addEventListener('change', () => {
+      preview.replaceChildren(...Array.from(input.files || []).map(file => {
+        const image = document.createElement('img');
+        image.src = URL.createObjectURL(file);
+        image.alt = file.name;
+        image.onload = () => URL.revokeObjectURL(image.src);
+        return image;
+      }));
+    });
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const files = Array.from(input.files || []);
+      if (!files.length) return;
+
+      button.disabled = true;
+      message.textContent = 'Subiendo fotos...';
+      let savedCount = 0;
+
+      try {
+        for (const file of files) {
+          try {
+            const safeName = file.name.toLowerCase().replace(/[^a-z0-9.-]/g, '-');
+            const path = `${crypto.randomUUID()}-${safeName}`;
+            const { error: uploadError } = await supabaseClient.storage
+              .from(BUCKET)
+              .upload(path, file, { contentType: file.type, upsert: false });
+            if (uploadError) {
+              throw new Error(`falló la subida al bucket: ${uploadError.message}`);
+            }
+
+            const { data: publicData } = supabaseClient.storage.from(BUCKET).getPublicUrl(path);
+            if (!publicData?.publicUrl) {
+              throw new Error('no se pudo obtener la URL pública');
+            }
+
+            const { error: insertError } = await supabaseClient
+              .from('fotos')
+              .insert([{ url: publicData.publicUrl }]);
+            if (insertError) {
+              throw new Error(`falló el registro en la tabla fotos: ${insertError.message}`);
+            }
+
+            savedCount += 1;
+            message.textContent = `Procesadas ${savedCount} de ${files.length} fotos...`;
+          } catch (fileError) {
+            throw new Error(`Archivo "${file.name}": ${fileError.message}`);
+          }
+        }
+
+        message.textContent = `${savedCount} ${savedCount === 1 ? 'imagen guardada' : 'imágenes guardadas'} exitosamente.`;
+        form.reset();
+        preview.replaceChildren();
+      } catch (error) {
+        console.error('Error detallado de Supabase:', error);
+        message.textContent = `Error después de guardar ${savedCount} de ${files.length}: ${error.message || 'error desconocido'}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
